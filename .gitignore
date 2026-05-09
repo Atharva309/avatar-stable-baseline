@@ -17,6 +17,7 @@
 /build
 
 # misc
+.cursor/
 .DS_Store
 *.pem
 
@@ -27,6 +28,9 @@ yarn-error.log*
 
 # local env files
 .env*.local
+.env
+.env.*
+!.env.example
 
 # vercel
 .vercel
