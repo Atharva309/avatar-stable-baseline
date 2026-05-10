@@ -32,6 +32,16 @@ yarn-error.log*
 .env.*
 !.env.example
 
+node_modules
+.env.local
+version-simli/node_modules
+version-talkinghead/node_modules
+version-simli/.env.local
+version-talkinghead/.env.local
+.next
+version-simli/.next
+version-talkinghead/.next
+
 # vercel
 .vercel
 
