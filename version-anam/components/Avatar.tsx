@@ -43,6 +43,17 @@ export type AvatarProps = {
 
 const VIDEO_ID = "anam-avatar-video";
 const AUDIO_ID = "anam-avatar-audio";
+const FORCED_ANAM_PERSONA_ID = "a0225e36-2ca6-4dcd-84a2-e49a506e41c6";
+
+function getErrorMessage(err: unknown): string {
+  if (err instanceof Error && err.message) return err.message;
+  if (typeof err === "string" && err.trim()) return err;
+  if (typeof err === "object" && err !== null) {
+    const maybeMessage = (err as { message?: unknown }).message;
+    if (typeof maybeMessage === "string" && maybeMessage.trim()) return maybeMessage;
+  }
+  return "Unknown error when starting session.";
+}
 
 export const Avatar = forwardRef<AvatarRef, AvatarProps>((props, ref) => {
   const { conversationActive = false, onMessageHistoryUpdated, onMessageStreamEvent } = props;
@@ -73,18 +84,20 @@ export const Avatar = forwardRef<AvatarRef, AvatarProps>((props, ref) => {
   // Create Anam client once; message listeners stay registered for the component lifetime.
   useEffect(() => {
     const apiKey = process.env.NEXT_PUBLIC_ANAM_API_KEY;
-    const personaId = process.env.NEXT_PUBLIC_ANAM_PERSONA_ID;
+    const personaId = FORCED_ANAM_PERSONA_ID;
 
-    if (!apiKey || !personaId) {
-      setInitError("Add NEXT_PUBLIC_ANAM_API_KEY and NEXT_PUBLIC_ANAM_PERSONA_ID to .env.local.");
+    if (!apiKey) {
+      setInitError("Add NEXT_PUBLIC_ANAM_API_KEY to .env.local.");
       return;
     }
+    const avatarId = process.env.NEXT_PUBLIC_ANAM_AVATAR_ID ?? personaId;
+    const voiceId = process.env.NEXT_PUBLIC_ANAM_VOICE_ID ?? personaId;
 
     const personaConfig: PersonaConfig = {
       personaId,
       name: "Dana",
-      avatarId: personaId,
-      voiceId: personaId,
+      avatarId,
+      voiceId,
       systemPrompt: CHAT_SYSTEM_PROMPT,
     };
 
@@ -159,7 +172,13 @@ export const Avatar = forwardRef<AvatarRef, AvatarProps>((props, ref) => {
       } catch (e) {
         console.error("Anam stream failed:", e);
         if (!cancelled) {
-          setInitError(e instanceof Error ? e.message : "Could not start Anam session.");
+          const msg = getErrorMessage(e);
+
+          setInitError(
+            /unknown error when starting session/i.test(msg)
+              ? "Anam session failed. Set NEXT_PUBLIC_ANAM_AVATAR_ID and NEXT_PUBLIC_ANAM_VOICE_ID in .env.local (personaId usually cannot be reused for both)."
+              : msg
+          );
         }
       }
     };
