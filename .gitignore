@@ -41,6 +41,9 @@ version-talkinghead/.env.local
 .next
 version-simli/.next
 version-talkinghead/.next
+version-anam/node_modules
+version-anam/.env.local
+version-anam/.next
 
 # vercel
 .vercel
