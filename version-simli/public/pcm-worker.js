@@ -1,6 +1,8 @@
 /* global self */
 /**
- * Float32 samples (mono, target rate) -> PCM16 Int16Array; posts transferable ArrayBuffer back.
+ * pcm-worker.js
+ * Web Worker: Float32 mono samples -> PCM16 Int16Array.
+ * Offloads conversion from the main thread; used by Avatar.tsx.
  */
 self.onmessage = function (e) {
   var ab = e.data;

@@ -1,46 +1,37 @@
-// Direct browser WebSocket connection to Deepgram STT
-// Avoids the @deepgram/sdk package which has Node.js dependencies (ws, bufferutil)
+/**
+ * deepgram.ts
+ * Custom WebSocket client for Deepgram streaming STT.
+ * Avoids the @deepgram/sdk npm package which has Node.js
+ * dependencies that break in the browser.
+ * Used by useVoiceSession.ts.
+ */
 
-export interface DeepgramConnection {
-  send: (data: Blob | ArrayBuffer) => void;
-  close: () => void;
-  /** Second arg is true when `is_final` or `speech_final` from Deepgram. */
-  onTranscript: (callback: (transcript: string, utteranceComplete: boolean) => void) => void;
-  onOpen: (callback: () => void) => void;
-  onClose: (callback: () => void) => void;
-  onError: (callback: (error: Event) => void) => void;
-}
+import {
+  DEEPGRAM_LANGUAGE,
+  DEEPGRAM_MODEL,
+  ENDPOINTING_MS,
+  UTTERANCE_END_MS,
+} from "@/lib/constants";
+import type { DeepgramConnection, DeepgramStreamOptions, DeepgramTranscriptMeta } from "@/types";
 
-/** Defaults for browser streaming STT. */
+/** Default query params for browser streaming STT. */
 export const DEEPGRAM_STREAM_DEFAULTS = {
-  model: "nova-2",
-  language: "en-US",
+  model: DEEPGRAM_MODEL,
+  language: DEEPGRAM_LANGUAGE,
   smart_format: true,
   interim_results: true,
-  utterance_end_ms: 1000,
+  utterance_end_ms: UTTERANCE_END_MS,
   vad_events: true,
-  endpointing: 350,
+  endpointing: ENDPOINTING_MS,
 } as const;
 
-export type DeepgramStreamOptions = {
-  model?: string;
-  language?: string;
-  smart_format?: boolean;
-  interim_results?: boolean;
-  utterance_end_ms?: number;
-  vad_events?: boolean;
-  /** Silence (ms) before Deepgram finalizes a phrase; helps `is_final` / `speech_final` fire reliably. */
-  endpointing?: number;
-};
-
-export function createDeepgramConnection(options: DeepgramStreamOptions = {}): DeepgramConnection {
-  const apiKey = process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY;
-  if (!apiKey) {
-    throw new Error("Missing NEXT_PUBLIC_DEEPGRAM_API_KEY");
-  }
-
+/**
+ * Builds the Deepgram listen WebSocket URL with merged options.
+ * @param apiKey - NEXT_PUBLIC_DEEPGRAM_API_KEY
+ * @param options - Optional overrides for stream parameters
+ */
+function buildDeepgramListenUrl(apiKey: string, options: DeepgramStreamOptions): string {
   const merged = { ...DEEPGRAM_STREAM_DEFAULTS, ...options };
-
   const params = new URLSearchParams();
   params.set("model", merged.model);
   params.set("language", merged.language);
@@ -48,11 +39,25 @@ export function createDeepgramConnection(options: DeepgramStreamOptions = {}): D
   if (merged.interim_results) params.set("interim_results", "true");
   if (merged.utterance_end_ms) params.set("utterance_end_ms", String(merged.utterance_end_ms));
   if (merged.vad_events) params.set("vad_events", "true");
-  params.set("endpointing", String(merged.endpointing ?? 350));
+  params.set("endpointing", String(merged.endpointing ?? ENDPOINTING_MS));
+  return `wss://api.deepgram.com/v1/listen?${params.toString()}`;
+}
 
-  const ws = new WebSocket(`wss://api.deepgram.com/v1/listen?${params.toString()}`, ["token", apiKey]);
+/**
+ * Opens a browser WebSocket to Deepgram and returns a small connection API.
+ * @param options - Optional Deepgram stream overrides
+ * @returns DeepgramConnection for send/onTranscript/close
+ */
+export function createDeepgramConnection(options: DeepgramStreamOptions = {}): DeepgramConnection {
+  const apiKey = process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY;
+  if (!apiKey) {
+    throw new Error("Missing NEXT_PUBLIC_DEEPGRAM_API_KEY");
+  }
 
-  let transcriptCallback: ((transcript: string, utteranceComplete: boolean) => void) | null = null;
+  const ws = new WebSocket(buildDeepgramListenUrl(apiKey, options), ["token", apiKey]);
+
+  let transcriptCallback: ((transcript: string, meta: DeepgramTranscriptMeta) => void) | null =
+    null;
   let openCallback: (() => void) | null = null;
   let closeCallback: (() => void) | null = null;
   let errorCallback: ((error: Event) => void) | null = null;
@@ -71,17 +76,24 @@ export function createDeepgramConnection(options: DeepgramStreamOptions = {}): D
 
   ws.onmessage = (event) => {
     try {
-      const data = JSON.parse(event.data);
+      const data = JSON.parse(event.data as string) as {
+        type?: string;
+        is_final?: boolean;
+        speech_final?: boolean;
+        channel?: { alternatives?: { transcript?: string }[] };
+      };
       if (data.type === "Results") {
-        const transcript = data.channel?.alternatives?.[0]?.transcript || "";
-        // Treat either flag as "this transcript is safe to act on" (browser streams often rely on speech_final).
-        const utteranceComplete = data.is_final === true || data.speech_final === true;
+        const transcript = data.channel?.alternatives?.[0]?.transcript ?? "";
+        const meta: DeepgramTranscriptMeta = {
+          isFinal: data.is_final === true,
+          isSpeechFinal: data.speech_final === true,
+        };
         if (transcript.trim().length > 0) {
-          transcriptCallback?.(transcript, utteranceComplete);
+          transcriptCallback?.(transcript, meta);
         }
       }
-    } catch (e) {
-      console.error("Deepgram message parse error:", e);
+    } catch (parseError) {
+      console.error("Deepgram message parse error:", parseError);
     }
   };
 
@@ -99,7 +111,6 @@ export function createDeepgramConnection(options: DeepgramStreamOptions = {}): D
     },
     onOpen: (callback) => {
       openCallback = callback;
-      // WebSocket may already be OPEN if registration happens after connect (race on fast networks).
       if (ws.readyState === WebSocket.OPEN) {
         callback();
       }

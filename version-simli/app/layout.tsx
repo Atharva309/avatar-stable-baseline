@@ -1,35 +1,25 @@
+/**
+ * layout.tsx
+ * Root layout for PitchLab — light theme, full-height app shell.
+ */
+
 import type { Metadata } from "next";
-import localFont from "next/font/local";
 import "./globals.css";
 
-const geistSans = localFont({
-  src: "./fonts/GeistVF.woff",
-  variable: "--font-geist-sans",
-  weight: "100 900",
-});
-const geistMono = localFont({
-  src: "./fonts/GeistMonoVF.woff",
-  variable: "--font-geist-mono",
-  weight: "100 900",
-});
-
 export const metadata: Metadata = {
-  title: "Dana Reeves | AI Sales Persona",
-  description: "Interactive AI sales training persona powered by GPT-4o, Deepgram, and ElevenLabs",
+  title: "PitchLab — AI Sales Training",
+  description: "Practice sales conversations with AI-powered simulations",
 };
 
+/**
+ * Root HTML wrapper for all routes.
+ */
 export default function RootLayout({
   children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+}: Readonly<{ children: React.ReactNode }>): React.ReactElement {
   return (
     <html lang="en">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
-        {children}
-      </body>
+      <body className="min-h-screen bg-page text-text-primary antialiased">{children}</body>
     </html>
   );
 }

@@ -1,3 +1,9 @@
+/**
+ * Avatar.tsx
+ * Simli WebRTC video avatar: session init, TTS decode, PCM worker, sendAudioData.
+ * Exposes AvatarRef via forwardRef for useVoiceSession orchestration.
+ */
+
 "use client";
 
 import React, {
@@ -14,36 +20,31 @@ import {
   LogLevel,
   SimliClient,
 } from "simli-client";
+import {
+  FLOAT_SAMPLES_PER_WORKER_CHUNK,
+  PCM_CHUNK_SIZE,
+  POST_CONNECT_ACK_WAIT_MS,
+  SAMPLE_RATE_HZ,
+  SIMLI_CONNECT_TIMEOUT_MS,
+  SIMLI_MAX_IDLE_TIME_SEC,
+  SIMLI_MAX_SESSION_LENGTH_SEC,
+} from "@/lib/constants";
+import type { AvatarRef, SpeakAudioPayload } from "@/types";
 
-export interface AvatarRef {
-  speakAudio: (data: {
-    audio: ArrayBuffer | Blob;
-    words?: string[];
-    wtimes?: number[];
-    wdurations?: number[];
-    chars?: string[];
-    ctimes?: number[];
-    cdurations?: number[];
-    /** Optional caption path for alternate avatar implementations (e.g. Rapport TTS). */
-    text?: string;
-  }) => Promise<void>;
-  resumeAudioContext: () => void;
-  stopSpeaking: () => void;
-}
+// Re-export for consumers that imported AvatarRef from this module historically.
+export type { AvatarRef } from "@/types";
 
-const TARGET_SAMPLE_RATE = 16000;
-
-/** Bytes per Simli.sendAudioData slice after PCM16 exists (8192 = 4096 Int16 samples). */
-const PCM_CHUNK_BYTES = 8192;
-
-/** Float samples per worker job; output is at most PCM_CHUNK_BYTES of PCM16. */
-const FLOAT_SAMPLES_PER_WORKER_CHUNK = PCM_CHUNK_BYTES / 2;
-
-const SIMLI_CONNECT_TIMEOUT_MS = 120_000;
-const POST_CONNECT_ACK_WAIT_MS = 300;
-
-function resampleLinear(input: Float32Array, inputRate: number, outputRate: number): Float32Array {
-  if (inputRate === outputRate) return input;
+/**
+ * Linear resample mono Float32 from inputRate to outputRate.
+ */
+function resampleLinear(
+  input: Float32Array,
+  inputRate: number,
+  outputRate: number
+): Float32Array {
+  if (inputRate === outputRate) {
+    return input;
+  }
   const ratio = inputRate / outputRate;
   const outLength = Math.max(1, Math.round(input.length / ratio));
   const out = new Float32Array(outLength);
@@ -57,48 +58,64 @@ function resampleLinear(input: Float32Array, inputRate: number, outputRate: numb
   return out;
 }
 
-// Decode + mono + resample on main thread only (decodeAudioData cannot run in a worker).
-async function decodeToMonoFloat16k(arrayBuffer: ArrayBuffer, audioContext: AudioContext): Promise<Float32Array> {
-  if (audioContext.sampleRate !== TARGET_SAMPLE_RATE) {
-    console.warn(`[Avatar] AudioContext sampleRate is ${audioContext.sampleRate}, expected ${TARGET_SAMPLE_RATE}`);
+/**
+ * Decodes compressed audio to mono Float32 at SAMPLE_RATE_HZ (main thread only).
+ */
+async function decodeToMonoFloat16k(
+  arrayBuffer: ArrayBuffer,
+  audioContext: AudioContext
+): Promise<Float32Array> {
+  if (audioContext.sampleRate !== SAMPLE_RATE_HZ) {
+    console.warn(
+      `[Avatar] AudioContext sampleRate is ${audioContext.sampleRate}, expected ${SAMPLE_RATE_HZ}`
+    );
   }
 
   const decoded = await audioContext.decodeAudioData(arrayBuffer.slice(0));
-  const nCh = decoded.numberOfChannels;
-  const len = decoded.length;
+  const channelCount = decoded.numberOfChannels;
+  const length = decoded.length;
 
   let samples: Float32Array;
-  if (nCh === 1) {
+  if (channelCount === 1) {
     samples = decoded.getChannelData(0);
   } else {
-    samples = new Float32Array(len);
-    for (let i = 0; i < len; i++) {
+    samples = new Float32Array(length);
+    for (let i = 0; i < length; i++) {
       let sum = 0;
-      for (let c = 0; c < nCh; c++) sum += decoded.getChannelData(c)[i];
-      samples[i] = sum / nCh;
+      for (let c = 0; c < channelCount; c++) {
+        sum += decoded.getChannelData(c)[i];
+      }
+      samples[i] = sum / channelCount;
     }
   }
 
-  if (decoded.sampleRate !== TARGET_SAMPLE_RATE) {
-    samples = resampleLinear(samples, decoded.sampleRate, TARGET_SAMPLE_RATE);
+  if (decoded.sampleRate !== SAMPLE_RATE_HZ) {
+    samples = resampleLinear(samples, decoded.sampleRate, SAMPLE_RATE_HZ);
   }
 
   return samples;
 }
 
+/**
+ * Posts a Float32 chunk to pcm-worker.js and resolves with PCM16 ArrayBuffer.
+ */
 function convertFloatChunkInWorker(worker: Worker, chunk: Float32Array): Promise<ArrayBuffer> {
   return new Promise((resolve, reject) => {
     const copy = new Float32Array(chunk.length);
     copy.set(chunk);
 
-    const onMsg = (ev: MessageEvent<ArrayBuffer | null>) => {
+    const onMsg = (ev: MessageEvent<ArrayBuffer | null>): void => {
       worker.removeEventListener("message", onMsg);
       worker.removeEventListener("error", onErr);
       const buf = ev.data;
-      if (!buf) reject(new Error("PCM worker returned empty"));
-      else resolve(buf);
+      if (!buf) {
+        reject(new Error("PCM worker returned empty"));
+      } else {
+        resolve(buf);
+      }
     };
-    const onErr = () => {
+
+    const onErr = (): void => {
       worker.removeEventListener("message", onMsg);
       worker.removeEventListener("error", onErr);
       reject(new Error("PCM worker error"));
@@ -110,15 +127,26 @@ function convertFloatChunkInWorker(worker: Worker, chunk: Float32Array): Promise
   });
 }
 
-/** Push PCM to Simli in a tight loop — no timers between calls. */
-function sendPcmToSimli(client: SimliClient, pcmU8: Uint8Array, shouldAbort: () => boolean) {
-  for (let i = 0; i < pcmU8.length; i += PCM_CHUNK_BYTES) {
-    if (shouldAbort()) return;
-    const end = Math.min(i + PCM_CHUNK_BYTES, pcmU8.length);
+/**
+ * Pushes PCM to Simli in a tight loop — no timers between calls.
+ */
+function sendPcmToSimli(
+  client: SimliClient,
+  pcmU8: Uint8Array,
+  shouldAbort: () => boolean
+): void {
+  for (let i = 0; i < pcmU8.length; i += PCM_CHUNK_SIZE) {
+    if (shouldAbort()) {
+      return;
+    }
+    const end = Math.min(i + PCM_CHUNK_SIZE, pcmU8.length);
     client.sendAudioData(pcmU8.subarray(i, end));
   }
 }
 
+/**
+ * Races a promise against a timeout for Simli connect.
+ */
 function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
   let timeoutId: ReturnType<typeof setTimeout>;
   const timeout = new Promise<never>((_, reject) => {
@@ -127,12 +155,17 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId)) as Promise<T>;
 }
 
-function kickVideoPlay(video: HTMLVideoElement) {
+/**
+ * Best-effort autoplay for WebRTC video (Safari often needs a user gesture first).
+ */
+function kickVideoPlay(video: HTMLVideoElement): void {
   void video.play().catch(() => {});
-  if (video.srcObject) void video.play().catch(() => {});
+  if (video.srcObject) {
+    void video.play().catch(() => {});
+  }
 }
 
-export const Avatar = forwardRef<AvatarRef, {}>((props, ref) => {
+export const Avatar = forwardRef<AvatarRef, object>((_props, ref) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const simliRef = useRef<SimliClient | null>(null);
@@ -143,6 +176,9 @@ export const Avatar = forwardRef<AvatarRef, {}>((props, ref) => {
   const [isReady, setIsReady] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
 
+  /**
+   * Returns or creates the decode AudioContext at SAMPLE_RATE_HZ.
+   */
   const ensureDecodeAudioContext = (): AudioContext => {
     const prev = decodeAudioContextRef.current;
     if (prev && prev.state !== "closed") {
@@ -154,19 +190,25 @@ export const Avatar = forwardRef<AvatarRef, {}>((props, ref) => {
     }
 
     const next = new AudioContext({
-      sampleRate: TARGET_SAMPLE_RATE,
+      sampleRate: SAMPLE_RATE_HZ,
       latencyHint: "playback",
     });
     decodeAudioContextRef.current = next;
     return next;
   };
 
+  // ── Video inline playback (mobile Safari) ───────────────────────────────────
+
   useLayoutEffect(() => {
     const el = videoRef.current;
-    if (!el) return;
+    if (!el) {
+      return;
+    }
     el.setAttribute("playsinline", "");
     el.setAttribute("webkit-playsinline", "");
   }, []);
+
+  // ── PCM worker lifecycle ────────────────────────────────────────────────────
 
   useEffect(() => {
     const worker = new Worker("/pcm-worker.js");
@@ -177,20 +219,25 @@ export const Avatar = forwardRef<AvatarRef, {}>((props, ref) => {
     };
   }, []);
 
-  // Init: Simli token + WebRTC; kick video.play once streams attach.
+  // ── Simli init: token + WebRTC ──────────────────────────────────────────────
+
   useEffect(() => {
     const video = videoRef.current;
     const audio = audioRef.current;
-    if (!video || !audio) return;
+    if (!video || !audio) {
+      return;
+    }
 
     let cancelled = false;
 
-    const initSimli = async () => {
+    const initSimli = async (): Promise<void> => {
       const apiKey = process.env.NEXT_PUBLIC_SIMLI_API_KEY;
       const faceId = process.env.NEXT_PUBLIC_SIMLI_FACE_ID;
 
       if (!apiKey || !faceId) {
-        setInitError("Add NEXT_PUBLIC_SIMLI_API_KEY and NEXT_PUBLIC_SIMLI_FACE_ID to .env.local.");
+        setInitError(
+          "Add NEXT_PUBLIC_SIMLI_API_KEY and NEXT_PUBLIC_SIMLI_FACE_ID to .env.local."
+        );
         return;
       }
 
@@ -200,14 +247,16 @@ export const Avatar = forwardRef<AvatarRef, {}>((props, ref) => {
           config: {
             faceId,
             handleSilence: true,
-            maxSessionLength: 3600,
-            maxIdleTime: 300,
+            maxSessionLength: SIMLI_MAX_SESSION_LENGTH_SEC,
+            maxIdleTime: SIMLI_MAX_IDLE_TIME_SEC,
           },
         });
 
         const sessionToken = tokenRes?.session_token;
         if (typeof sessionToken !== "string" || sessionToken.length === 0) {
-          throw new Error("Simli token response missing session_token — check API key and face ID.");
+          throw new Error(
+            "Simli token response missing session_token — check API key and face ID."
+          );
         }
 
         const iceServers = await generateIceServers(apiKey);
@@ -223,7 +272,7 @@ export const Avatar = forwardRef<AvatarRef, {}>((props, ref) => {
           "wss://api.simli.ai"
         );
 
-        client.on("error", (detail) => {
+        client.on("error", (detail: unknown) => {
           console.error("Simli:", detail);
         });
 
@@ -233,7 +282,6 @@ export const Avatar = forwardRef<AvatarRef, {}>((props, ref) => {
         }
 
         simliRef.current = client;
-
         kickVideoPlay(video);
 
         await withTimeout(
@@ -251,8 +299,10 @@ export const Avatar = forwardRef<AvatarRef, {}>((props, ref) => {
 
         await new Promise<void>((resolve) => {
           let settled = false;
-          const done = () => {
-            if (settled) return;
+          const done = (): void => {
+            if (settled) {
+              return;
+            }
             settled = true;
             resolve();
           };
@@ -270,11 +320,16 @@ export const Avatar = forwardRef<AvatarRef, {}>((props, ref) => {
         requestAnimationFrame(() => requestAnimationFrame(() => kickVideoPlay(video)));
 
         setIsReady(true);
-      } catch (e) {
-        console.error("Simli session failed:", e);
-        if (cancelled) return;
+      } catch (connectError) {
+        console.error("Simli session failed:", connectError);
+        if (cancelled) {
+          return;
+        }
 
-        const msg = e instanceof Error ? e.message : "Could not connect to Simli.";
+        const msg =
+          connectError instanceof Error
+            ? connectError.message
+            : "Could not connect to Simli.";
         const hint =
           msg.includes("CONNECTION TIMED OUT") || msg.includes("timed out")
             ? `${msg} If this persists, try another network or browser (Safari sometimes blocks WebRTC until a user gesture — tap “Start call” first).`
@@ -285,7 +340,6 @@ export const Avatar = forwardRef<AvatarRef, {}>((props, ref) => {
 
     void initSimli();
 
-    // Cleanup: stop Simli, terminate PCM worker is separate effect; close decode AudioContext here.
     return () => {
       cancelled = true;
       setIsReady(false);
@@ -300,41 +354,69 @@ export const Avatar = forwardRef<AvatarRef, {}>((props, ref) => {
     };
   }, []);
 
+  // ── Imperative API for useVoiceSession ──────────────────────────────────────
+
+  const isReadyRef = useRef(false);
+  useEffect(() => {
+    isReadyRef.current = isReady;
+  }, [isReady]);
+
   useImperativeHandle(
     ref,
-    () => ({
-      resumeAudioContext: () => {
+    (): AvatarRef => ({
+      isReady: (): boolean => isReadyRef.current,
+      waitUntilReady: async (maxMs = SIMLI_CONNECT_TIMEOUT_MS): Promise<boolean> => {
+        const start = Date.now();
+        while (Date.now() - start < maxMs) {
+          if (isReadyRef.current && simliRef.current) {
+            return true;
+          }
+          await new Promise<void>((resolve) => setTimeout(resolve, 200));
+        }
+        return isReadyRef.current && simliRef.current !== null;
+      },
+      resumeAudioContext: (): void => {
         const ctx = decodeAudioContextRef.current;
-        if (ctx?.state === "suspended") void ctx.resume();
-        const v = videoRef.current;
-        if (v) kickVideoPlay(v);
+        if (ctx?.state === "suspended") {
+          void ctx.resume();
+        }
+        const video = videoRef.current;
+        if (video) {
+          kickVideoPlay(video);
+        }
         void audioRef.current?.play().catch(() => {});
       },
-      stopSpeaking: () => {
+      stopSpeaking: (): void => {
         speakAbortRef.current = true;
         try {
           simliRef.current?.ClearBuffer();
         } catch {
-          /* no-op */
+          /* Simli may throw if not connected */
         }
       },
-      speakAudio: async ({ audio }) => {
+      speakAudio: async ({ audio }: SpeakAudioPayload): Promise<void> => {
         const client = simliRef.current;
         const worker = pcmWorkerRef.current;
-        if (!client || !isReady || !worker) return;
+        if (!client || !isReady || !worker) {
+          return;
+        }
 
         speakAbortRef.current = false;
 
         const arrayBuffer = audio instanceof Blob ? await audio.arrayBuffer() : audio;
         const ctx = ensureDecodeAudioContext();
-        if (ctx.state === "suspended") await ctx.resume();
+        if (ctx.state === "suspended") {
+          await ctx.resume();
+        }
 
         const samples = await decodeToMonoFloat16k(arrayBuffer, ctx);
 
-        await new Promise<void>((r) => queueMicrotask(r));
+        await new Promise<void>((resolve) => queueMicrotask(resolve));
 
         for (let off = 0; off < samples.length; off += FLOAT_SAMPLES_PER_WORKER_CHUNK) {
-          if (speakAbortRef.current) break;
+          if (speakAbortRef.current) {
+            break;
+          }
 
           const end = Math.min(off + FLOAT_SAMPLES_PER_WORKER_CHUNK, samples.length);
           const slice = samples.subarray(off, end);
@@ -344,7 +426,7 @@ export const Avatar = forwardRef<AvatarRef, {}>((props, ref) => {
 
           sendPcmToSimli(client, pcmU8, () => speakAbortRef.current);
 
-          await new Promise<void>((r) => queueMicrotask(r));
+          await new Promise<void>((resolve) => queueMicrotask(resolve));
         }
       },
     }),
@@ -363,11 +445,11 @@ export const Avatar = forwardRef<AvatarRef, {}>((props, ref) => {
       <video
         ref={videoRef}
         className="h-full w-full object-cover"
-        autoPlay={true}
-        playsInline={true}
-        muted={true}
+        autoPlay
+        playsInline
+        muted
       />
-      <audio ref={audioRef} className="hidden" autoPlay={true} playsInline={true} />
+      <audio ref={audioRef} className="hidden" autoPlay playsInline />
     </div>
   );
 });

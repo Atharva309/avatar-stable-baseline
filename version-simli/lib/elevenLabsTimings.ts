@@ -1,25 +1,30 @@
 /**
- * Maps ElevenLabs `with-timestamps` alignment payload to TalkingHead-friendly arrays.
+ * elevenLabsTimings.ts
+ * Converts ElevenLabs alignment data into word and character timing arrays.
+ * Called by /api/tts after receiving the with-timestamps response.
  */
 
-export type LipSyncTiming = {
-  words: string[];
-  wtimes: number[];
-  wdurations: number[];
-  chars: string[];
-  ctimes: number[];
-  cdurations: number[];
-};
+import type { ElevenLabsAlignment, LipSyncTiming } from "@/types";
 
-const emptyTiming = (): LipSyncTiming => ({
-  words: [],
-  wtimes: [],
-  wdurations: [],
-  chars: [],
-  ctimes: [],
-  cdurations: [],
-});
+/**
+ * Returns an empty timing structure when alignment is missing or invalid.
+ */
+function buildEmptyTiming(): LipSyncTiming {
+  return {
+    words: [],
+    wtimes: [],
+    wdurations: [],
+    chars: [],
+    ctimes: [],
+    cdurations: [],
+  };
+}
 
+/**
+ * Converts ElevenLabs alignment data into word and character timing arrays.
+ * @param alignment - Raw alignment object from ElevenLabs API
+ * @returns Structured timing arrays for avatar lip sync metadata
+ */
 export function timingsFromAlignment(alignment: unknown): LipSyncTiming {
   const words: string[] = [];
   const wtimes: number[] = [];
@@ -29,15 +34,10 @@ export function timingsFromAlignment(alignment: unknown): LipSyncTiming {
   const cdurations: number[] = [];
 
   if (!alignment || typeof alignment !== "object") {
-    return emptyTiming();
+    return buildEmptyTiming();
   }
 
-  const a = alignment as {
-    characters?: string[];
-    character_start_times_seconds?: number[];
-    character_end_times_seconds?: number[];
-  };
-
+  const a = alignment as ElevenLabsAlignment;
   const { characters, character_start_times_seconds, character_end_times_seconds } = a;
 
   if (
@@ -47,7 +47,7 @@ export function timingsFromAlignment(alignment: unknown): LipSyncTiming {
     characters.length !== character_start_times_seconds.length ||
     characters.length !== character_end_times_seconds.length
   ) {
-    return emptyTiming();
+    return buildEmptyTiming();
   }
 
   let currentWord = "";
