@@ -64,7 +64,7 @@ export function SimulationRunner({
   const stage = attempt.current_stage;
 
   return (
-    <div className="w-full max-w-5xl mx-auto overflow-x-hidden">
+    <div className="w-full max-w-5xl mx-auto">
       <PipelineProgress items={progress} />
 
       <header className="mb-6">
