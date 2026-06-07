@@ -1,8 +1,8 @@
 /**
  * simulation/[id]/results/page.tsx — teacher
+ * Simulation results with attempts table and leaderboard.
  */
 
-import { BackButton } from "@/components/BackButton";
 import { redirect } from "next/navigation";
 import { TeacherResultsClient } from "@/components/TeacherResultsClient";
 import { LEADERBOARD_QUERY_LIMIT } from "@/lib/constants";
@@ -24,7 +24,7 @@ export default async function TeacherResultsPage({
 
   const { data: simulation } = await supabase
     .from("simulations")
-    .select("title")
+    .select("title, persona_name, persona_role, product_context")
     .eq("id", params.id)
     .single();
 
@@ -32,7 +32,7 @@ export default async function TeacherResultsPage({
 
   const { data: attempts } = await supabase
     .from("attempts")
-    .select("*, profiles(full_name), stage_scores(*)")
+    .select("*, students(display_name), stage_scores(*)")
     .eq("simulation_id", params.id)
     .order("started_at", { ascending: false });
 
@@ -44,8 +44,8 @@ export default async function TeacherResultsPage({
       student_id,
       total_score,
       completed_at,
-      profiles (
-        full_name
+      students (
+        display_name
       )
     `
     )
@@ -66,18 +66,17 @@ export default async function TeacherResultsPage({
     }
   });
 
+  const subtitle = [simulation.persona_role, simulation.product_context?.slice(0, 40)]
+    .filter(Boolean)
+    .join(" · ");
+
   return (
-    <div>
-      <BackButton label="Back to My Simulations" href="/teacher/dashboard" />
-      <h1 className="text-2xl font-bold text-text-primary mt-2">{simulation.title} — Results</h1>
-      <p className="text-sm text-text-secondary mt-1">Student attempts and leaderboard</p>
-      <div className="mt-8">
-        <TeacherResultsClient
-          attempts={(attempts ?? []) as Parameters<typeof TeacherResultsClient>[0]["attempts"]}
-          leaderboard={leaderboard}
-          stageScoresByAttempt={stageScoresByAttempt}
-        />
-      </div>
-    </div>
+    <TeacherResultsClient
+      attempts={(attempts ?? []) as Parameters<typeof TeacherResultsClient>[0]["attempts"]}
+      leaderboard={leaderboard}
+      stageScoresByAttempt={stageScoresByAttempt}
+      simulationTitle={simulation.title}
+      simulationSubtitle={subtitle || undefined}
+    />
   );
 }

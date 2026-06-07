@@ -14,6 +14,8 @@ export type MediaPermissionState = "pending" | "ready" | "mic_denied" | "error";
 export type UseVideoCallOptions = {
   /** When false, only microphone is requested (phone / prospecting stages). */
   withVideo?: boolean;
+  /** Called after unmute with a fresh audio stream (e.g. to rebind MediaRecorder). */
+  onAudioStreamReplace?: (stream: MediaStream) => void;
 };
 
 export type UseVideoCallReturn = {
@@ -52,6 +54,8 @@ function formatElapsed(seconds: number): string {
  */
 export function useVideoCall(options: UseVideoCallOptions = {}): UseVideoCallReturn {
   const withVideo = options.withVideo !== false;
+  const onAudioStreamReplaceRef = useRef(options.onAudioStreamReplace);
+  onAudioStreamReplaceRef.current = options.onAudioStreamReplace;
 
   const [permissionState, setPermissionState] = useState<MediaPermissionState>("pending");
   const [permissionError, setPermissionError] = useState("");
@@ -200,31 +204,123 @@ export function useVideoCall(options: UseVideoCallOptions = {}): UseVideoCallRet
 
   useEffect(() => {
     isMutedRef.current = isMuted;
-    const audioTrack = audioStreamRef.current?.getAudioTracks()[0];
-    if (audioTrack) {
-      audioTrack.enabled = !isMuted;
-    }
   }, [isMuted]);
 
-  useEffect(() => {
-    const videoTrack = rawStreamRef.current?.getVideoTracks()[0];
-    if (videoTrack) {
-      videoTrack.enabled = !isCameraOff;
-    }
+  const stopAudioTracks = useCallback((): void => {
+    const raw = rawStreamRef.current;
+    raw?.getAudioTracks().forEach((track) => {
+      track.stop();
+      raw.removeTrack(track);
+    });
+
+    audioStreamRef.current?.getAudioTracks().forEach((track) => track.stop());
+    audioStreamRef.current = null;
+    setAudioStream(null);
+  }, []);
+
+  const stopVideoTracks = useCallback((): void => {
+    const raw = rawStreamRef.current;
+    raw?.getVideoTracks().forEach((track) => {
+      track.stop();
+      raw.removeTrack(track);
+    });
+
+    videoPreviewStreamRef.current?.getVideoTracks().forEach((track) => track.stop());
+    videoPreviewStreamRef.current = null;
+    setHasVideoPreview(false);
+
     const video = videoElementRef.current;
     if (video) {
-      video.style.opacity = isCameraOff ? "0" : "1";
+      video.srcObject = null;
     }
-  }, [isCameraOff]);
-
-  const toggleMute = useCallback((): void => {
-    setIsMuted((prev) => !prev);
   }, []);
 
   const toggleCamera = useCallback((): void => {
-    if (cameraUnavailable) return;
-    setIsCameraOff((prev) => !prev);
-  }, [cameraUnavailable]);
+    if (cameraUnavailable) {
+      return;
+    }
+
+    if (!isCameraOff) {
+      stopVideoTracks();
+      setIsCameraOff(true);
+      return;
+    }
+
+    void (async (): Promise<void> => {
+      try {
+        const videoStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        const newVideoTrack = videoStream.getVideoTracks()[0];
+        if (!newVideoTrack) {
+          videoStream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+
+        const raw = rawStreamRef.current ?? new MediaStream();
+        raw.getVideoTracks().forEach((track) => {
+          track.stop();
+          raw.removeTrack(track);
+        });
+        raw.addTrack(newVideoTrack);
+        rawStreamRef.current = raw;
+
+        const videoOnly = new MediaStream([newVideoTrack]);
+        videoPreviewStreamRef.current = videoOnly;
+        setHasVideoPreview(true);
+        setIsCameraOff(false);
+        await attachVideoPreview();
+      } catch {
+        setCameraUnavailable(true);
+        setPermissionError("Could not turn the camera back on.");
+        setIsCameraOff(true);
+      }
+    })();
+  }, [cameraUnavailable, isCameraOff, stopVideoTracks, attachVideoPreview]);
+
+  const restartAudioTracks = useCallback(async (): Promise<boolean> => {
+    try {
+      const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const newAudioTrack = micStream.getAudioTracks()[0];
+      if (!newAudioTrack) {
+        micStream.getTracks().forEach((track) => track.stop());
+        return false;
+      }
+
+      const raw = rawStreamRef.current ?? new MediaStream();
+      raw.getAudioTracks().forEach((track) => {
+        track.stop();
+        raw.removeTrack(track);
+      });
+      raw.addTrack(newAudioTrack);
+      rawStreamRef.current = raw;
+
+      const audioOnly = new MediaStream([newAudioTrack]);
+      audioStreamRef.current = audioOnly;
+      setAudioStream(audioOnly);
+      setIsMuted(false);
+      isMutedRef.current = false;
+      setPermissionState("ready");
+      setPermissionError("");
+      onAudioStreamReplaceRef.current?.(audioOnly);
+      return true;
+    } catch {
+      setPermissionState("mic_denied");
+      setPermissionError("Could not turn the microphone back on.");
+      setIsMuted(true);
+      isMutedRef.current = true;
+      return false;
+    }
+  }, []);
+
+  const toggleMute = useCallback((): void => {
+    if (!isMuted) {
+      stopAudioTracks();
+      setIsMuted(true);
+      isMutedRef.current = true;
+      return;
+    }
+
+    void restartAudioTracks();
+  }, [isMuted, stopAudioTracks, restartAudioTracks]);
 
   const startTimer = useCallback((): void => {
     if (timerIdRef.current) return;

@@ -1,8 +1,8 @@
 /**
  * simulation/[id]/edit/page.tsx — teacher
+ * Edit existing simulation with Stitch form layout.
  */
 
-import { BackButton } from "@/components/BackButton";
 import { redirect } from "next/navigation";
 import { SimulationForm } from "@/components/SimulationForm";
 import { createClient } from "@/lib/supabase/server";
@@ -30,13 +30,10 @@ export default async function EditSimulationPage({
   if (!data) redirect("/teacher/dashboard");
 
   return (
-    <div>
-      <BackButton label="Back to My Simulations" href="/teacher/dashboard" />
-      <h1 className="text-2xl font-bold text-text-primary mb-2">Edit simulation</h1>
-      <p className="text-sm text-text-secondary mb-6">
-        Update scenario details and republish when ready.
-      </p>
-      <SimulationForm teacherId={profile.id} initial={data as Simulation} />
-    </div>
+    <SimulationForm
+      teacherId={profile.id}
+      initial={data as Simulation}
+      professorName={profile.full_name ?? "Professor"}
+    />
   );
 }

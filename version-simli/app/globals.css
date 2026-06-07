@@ -75,7 +75,9 @@ body {
 
   /* ── Call UI (contained below pipeline, not full viewport) ─── */
   .call-container-root {
-    @apply relative w-full overflow-hidden rounded-xl bg-call-background text-white;
+    @apply relative flex w-full min-h-0 flex-1 flex-col overflow-hidden rounded-xl bg-call-background text-white;
+    min-height: 800px;
+    height: calc(100dvh - 4rem - 7rem);
   }
 
   .call-stage-slot {
@@ -90,28 +92,20 @@ body {
     @apply relative flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden rounded-xl bg-call-background text-white;
   }
 
-  /* Persona video sits above the bottom dock — face centered in that area */
+  /* Persona video — full bleed inside call box (see CallLayout exports) */
   .call-persona-video-frame {
-    @apply absolute inset-x-0 top-0 overflow-hidden;
-    bottom: var(--call-video-dock-h, 152px);
+    @apply absolute inset-0 overflow-hidden bg-black;
   }
 
   .call-persona-video {
-    @apply block h-full w-full object-cover;
-    object-position: center 42%;
+    @apply absolute inset-0 block h-full w-full object-cover opacity-80;
     transform: translateZ(0);
     backface-visibility: hidden;
   }
 
   .call-persona-video-gradient {
-    @apply pointer-events-none absolute inset-x-0 bottom-0 h-16;
-    background: linear-gradient(to top, rgb(0 0 0 / 0.25), transparent);
-  }
-
-  /* Video call bottom dock — solid strip, no tall fade over the avatar */
-  .call-video-bottom-dock {
-    @apply absolute inset-x-0 bottom-0 z-30 flex flex-col items-center gap-1.5 px-3 pb-3 pt-2;
-    background: rgb(10 10 10 / 0.92);
+    @apply pointer-events-none absolute inset-0;
+    background: linear-gradient(to top, rgb(0 0 0 / 0.6), transparent 45%, rgb(0 0 0 / 0.3));
   }
 
   .stage-content-fade {
@@ -217,5 +211,51 @@ body {
 
   .stitch-tab-inactive {
     @apply text-text-secondary font-medium hover:text-text-primary;
+  }
+
+  /* ── Professor portal (Stitch) ─── */
+  .material-symbols-outlined {
+    font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
+    display: inline-block;
+    line-height: 1;
+    vertical-align: middle;
+  }
+
+  .professor-input {
+    @apply w-full border border-outline-variant rounded-md px-4 py-2.5 text-body-md text-on-surface bg-surface focus:outline-none focus:ring-2 focus:ring-secondary/30 focus:border-secondary transition-all;
+  }
+
+  .professor-modal-overlay {
+    backdrop-filter: blur(4px);
+    background-color: rgb(0 0 11 / 0.4);
+  }
+
+  .empty-state-gradient {
+    background: linear-gradient(180deg, rgb(255 255 255 / 0) 0%, rgb(242 244 246 / 0.5) 100%);
+  }
+
+  .expanding-row-content {
+    transition: max-height 0.3s ease-out, opacity 0.3s ease-out;
+    max-height: 0;
+    overflow: hidden;
+    opacity: 0;
+  }
+
+  .expanding-row-content.active {
+    max-height: 1200px;
+    opacity: 1;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #e2e8f0;
+    border-radius: 10px;
   }
 }

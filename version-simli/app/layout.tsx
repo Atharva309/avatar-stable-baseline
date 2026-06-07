@@ -21,6 +21,12 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>): React.ReactElement {
   return (
     <html lang="en">
+      <head>
+        <link
+          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&display=swap"
+          rel="stylesheet"
+        />
+      </head>
       <body className="min-h-screen bg-page text-text-primary antialiased">
         <ToastProvider>
           {children}

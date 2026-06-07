@@ -85,7 +85,10 @@ export function SimliCallStage({
   const [feedback, setFeedback] = useState<string | undefined>();
   const [scoreError, setScoreError] = useState("");
   const { showToast } = useToast();
-  const videoCall = useVideoCall({ withVideo: true });
+  const videoCall = useVideoCall({
+    withVideo: true,
+    onAudioStreamReplace: (stream) => voiceRef.current.replaceAudioStream(stream),
+  });
   const connectStartedRef = useRef(false);
   const getAudioStreamRef = useRef(videoCall.getAudioStream);
   const primeUserGestureRef = useRef(videoCall.primeUserGesture);
@@ -272,13 +275,14 @@ export function SimliCallStage({
 
   if (phase === "lobby") {
     return (
-      <div className="call-screen-root flex h-full min-h-0 flex-1 flex-col">
+      <div className="call-screen-root flex h-full min-h-0 flex-1 flex-col rounded-none bg-[#f9f9ff] text-[#111c2d]">
         {topBanner}
         {connectError.length > 0 && (
-          <p className="text-sm text-error px-4 py-2 shrink-0">{connectError}</p>
+          <p className="shrink-0 px-4 py-2 text-sm text-error">{connectError}</p>
         )}
-        <div className="flex-1 min-h-0">
+        <div className="flex min-h-0 flex-1 flex-col">
           <CallLobby
+            stageLabel={stageLabel}
             personaName={simulation.persona_name}
             personaRole={simulation.persona_role}
             permissionError={videoCall.permissionError}
@@ -289,6 +293,10 @@ export function SimliCallStage({
             cameraUnavailable={videoCall.cameraUnavailable}
             micReady={videoCall.permissionState === "ready"}
             cameraReady={showStudentPip}
+            isMuted={videoCall.isMuted}
+            isCameraOff={videoCall.isCameraOff}
+            onToggleMute={videoCall.toggleMute}
+            onToggleCamera={videoCall.toggleCamera}
             onJoinCall={handleJoinCall}
           />
         </div>

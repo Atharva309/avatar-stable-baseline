@@ -1,8 +1,8 @@
 /**
  * simulation/new/page.tsx — teacher
+ * Create new simulation with Stitch form layout.
  */
 
-import { BackButton } from "@/components/BackButton";
 import { SimulationForm } from "@/components/SimulationForm";
 import { requireRole } from "@/lib/auth-helpers";
 
@@ -11,14 +11,5 @@ import { requireRole } from "@/lib/auth-helpers";
  */
 export default async function NewSimulationPage(): Promise<React.ReactElement> {
   const profile = await requireRole("teacher");
-  return (
-    <div>
-      <BackButton label="Back to My Simulations" href="/teacher/dashboard" />
-      <h1 className="text-2xl font-bold text-text-primary mb-2">Create simulation</h1>
-      <p className="text-sm text-text-secondary mb-6">
-        Configure persona, product, and publish settings.
-      </p>
-      <SimulationForm teacherId={profile.id} />
-    </div>
-  );
+  return <SimulationForm teacherId={profile.id} professorName={profile.full_name ?? "Professor"} />;
 }

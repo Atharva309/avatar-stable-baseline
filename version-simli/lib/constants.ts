@@ -99,10 +99,27 @@ export const VOICE_ONLY_STAGES = ["prospecting", "close"] as const;
 
 // ── Routes ──────────────────────────────────────────────────────────────────────
 
-export const PUBLIC_ROUTES = ["/login", "/register"] as const;
+export const PUBLIC_ROUTES = [
+  "/login",
+  "/register",
+  "/student-login",
+  "/student-register",
+  "/join",
+] as const;
 
-export const DEFAULT_OPENING_GREETING =
-  "Yeah? I've got customers—what do you need?";
+/** Student onboarding entry — class code is never embedded in this URL. */
+export const STUDENT_JOIN_PATH = "/join";
+
+export const STUDENT_SESSION_COOKIE = "student_session";
+
+// ── Student auth ────────────────────────────────────────────────────────────────
+
+export const USERNAME_MIN_LENGTH = 3;
+export const USERNAME_MAX_LENGTH = 20;
+export const USERNAME_REGEX = /^[a-zA-Z0-9_]+$/;
+export const PASSWORD_MIN_LENGTH = 6;
+export const JOIN_CODE_LENGTH = 6;
+export const STUDENT_SESSION_DAYS = 7;
 
 // ── Stitch UI layout ──────────────────────────────────────────────────────────
 
@@ -112,6 +129,8 @@ export const SIMULATION_ENTRY_LOADER_MS = 500;
 export const STAGE_TRANSITION_MS = 200;
 export const CALL_CONTROL_BAR_BOTTOM_PX = 80;
 export const CALL_TRANSCRIPT_MAX_HEIGHT_PX = 128;
+/** Taller transcript strip during Simli video calls. */
+export const CALL_TRANSCRIPT_VIDEO_COMPACT_MAX_HEIGHT_PX = 132;
 export const PHONE_INITIALS_SIZE_PX = 96;
 export const PHONE_WAVEFORM_BAR_COUNT = 24;
 export const PHONE_WAVEFORM_MAX_HEIGHT_PX = 56;
